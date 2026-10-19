@@ -1,6 +1,8 @@
 package com.documind.service;
 
 import com.documind.dto.AnalysisRequestResponse;
+import com.documind.dto.JobCreateCommand;
+import com.documind.dto.JobSubmissionResult;
 import com.documind.dto.PullRequestAnalysisRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,18 +15,40 @@ public class AnalysisRequestService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisRequestService.class);
 
+    private final AnalysisJobService analysisJobService;
+
+    public AnalysisRequestService(AnalysisJobService analysisJobService) {
+        this.analysisJobService = analysisJobService;
+    }
+
     /**
-     * Accepts and validates a manual PR analysis request.
-     * Note: In Milestone 1, this acts as a validated entrypoint/stub.
-     * Durable job persistence, deduplication, and worker processing will be connected in Milestones 2-4.
+     * Accepts, validates, and persists a manual PR analysis request idempotently.
      */
     public AnalysisRequestResponse processAnalysisRequest(PullRequestAnalysisRequest request) {
-        log.info("Received manual analysis request for {}/{} PR #{}",
-                request.owner(), request.repository(), request.pullRequestNumber());
+        String repoFullName = request.owner() + "/" + request.repository();
+        String idempotencyKey = JobCreateCommand.buildManualIdempotencyKey(repoFullName, request.pullRequestNumber());
+
+        JobCreateCommand command = new JobCreateCommand(
+                null,
+                repoFullName,
+                request.pullRequestNumber(),
+                null,
+                null,
+                null,
+                idempotencyKey,
+                null
+        );
+
+        JobSubmissionResult result = analysisJobService.createOrGetJob(command);
+
+        String message = result.newlyCreated()
+                ? "Analysis request accepted for processing"
+                : "Analysis job already exists for this pull request";
 
         return new AnalysisRequestResponse(
                 "ACCEPTED",
-                "Analysis request accepted for processing",
+                message,
+                result.job().getId(),
                 request.owner(),
                 request.repository(),
                 request.pullRequestNumber(),
